@@ -19,6 +19,7 @@ class DocDB(object):
 
     def __init__(self, db_path=None):
         self.path = db_path or DEFAULTS['db_path']
+        #self.path = "/home/ericwallace/albertxu/xword/data/processed/wikipedia/docs.db"
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
 
     def __enter__(self):

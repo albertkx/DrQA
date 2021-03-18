@@ -6,7 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
-from ..tokenizers import CoreNLPTokenizer
+#from ..tokenizers import CoreNLPTokenizer
 from ..retriever import TfidfDocRanker
 from ..retriever import DocDB
 from .. import DATA_DIR

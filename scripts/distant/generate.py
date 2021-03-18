@@ -17,6 +17,7 @@ import logging
 import regex as re
 import os
 import json
+import csv
 import random
 
 from functools import partial
@@ -43,11 +44,15 @@ PROCESS_TOK = None
 PROCESS_DB = None
 
 
-def init(tokenizer_class, tokenizer_opts, db_class=None, db_opts=None):
+def init(tokenizer_class, tokenizer_opts, db_class=None, db_opts=None, db_path=None):
     global PROCESS_TOK, PROCESS_DB
+    #print(tokenizer_opts)
     PROCESS_TOK = tokenizer_class(**tokenizer_opts)
     Finalize(PROCESS_TOK, PROCESS_TOK.shutdown, exitpriority=100)
 
+    db_opts = {"db_path": "data/processed/wikipedia/docs.db"}
+    #if db_path:
+    #    db_opts.update({"db_path": db_path})
     # optionally open a db connection
     if db_class:
         PROCESS_DB = db_class(**db_opts)
@@ -66,16 +71,24 @@ def tokenize_text(text):
 
 def nltk_entity_groups(text):
     """Return all contiguous NER tagged chunks by NLTK."""
-    parse_tree = ne_chunk(pos_tag(word_tokenize(text)))
-    ner_chunks = [' '.join([l[0] for l in t.leaves()])
-                  for t in parse_tree.subtrees() if t.label() != 'S']
-    return ner_chunks
+    return None
 
 
 # ------------------------------------------------------------------------------
 # Find answer candidates.
 # ------------------------------------------------------------------------------
 
+def check_contains(words, term):
+    """ search for terms in word iteratively
+    """
+    joined = ""
+    for w in words:
+        joined += words.pop(0)
+        if len(joined) > len(term):
+            return False
+        if joined == term:
+            return True
+    return False
 
 def find_answer(paragraph, q_tokens, answer, opts):
     """Return the best matching answer offsets from a paragraph.
@@ -89,39 +102,25 @@ def find_answer(paragraph, q_tokens, answer, opts):
     """
     # Length check
     if len(paragraph) > opts['char_max'] or len(paragraph) < opts['char_min']:
-        return
+        return False, 0
 
     # Answer check
-    if opts['regex']:
-        # Add group around the whole answer
-        answer = '(%s)' % answer[0]
-        ans_regex = re.compile(answer, flags=re.IGNORECASE + re.UNICODE)
-        answers = ans_regex.findall(paragraph)
-        answers = {a[0] if isinstance(a, tuple) else a for a in answers}
-        answers = {a.strip() for a in answers if len(a.strip()) > 0}
-    else:
-        answers = {a for a in answer if a in paragraph}
+    answer = [answer]
+    answers = {a for a in answer if a.lower().replace(" ", "") in paragraph.replace(" ", "").lower()}
     if len(answers) == 0:
-        return
-
-    # Entity check. Default tokenizer + NLTK to minimize falling through cracks
-    q_tokens, q_nltk_ner = q_tokens
-    for ne in q_tokens.entity_groups():
-        if ne[0] not in paragraph:
-            return
-    for ne in q_nltk_ner:
-        if ne not in paragraph:
-            return
+        return False, 0
 
     # Search...
     p_tokens = tokenize_text(paragraph)
     p_words = p_tokens.words(uncased=True)
+    q_tokens = q_tokens[0]
     q_grams = Counter(q_tokens.ngrams(
         n=2, uncased=True, filter_fn=utils.filter_ngram
     ))
 
     best_score = 0
     best_ex = None
+    #print(answers)
     for ans in answers:
         try:
             a_words = tokenize_text(ans).words(uncased=True)
@@ -129,7 +128,8 @@ def find_answer(paragraph, q_tokens, answer, opts):
             logger.warn('Failed to tokenize answer: %s' % ans)
             continue
         for idx in range(len(p_words)):
-            if p_words[idx:idx + len(a_words)] == a_words:
+            #if sum(p_words[idx:idx + 5], [])[:len(a_words[0])] == a_words[0]: # we arbitrarily loosen the constraint to 5 word windows
+            if check_contains(p_words[idx: idx + len(a_words[0])], a_words[0]):
                 # Overlap check
                 w_s = max(idx - opts['window_sz'], 0)
                 w_e = min(idx + opts['window_sz'] + len(a_words), len(p_words))
@@ -145,15 +145,18 @@ def find_answer(paragraph, q_tokens, answer, opts):
                         'id': uuid.uuid4().hex,
                         'question': q_tokens.words(),
                         'document': p_tokens.words(),
-                        'offsets': p_tokens.offsets(),
-                        'answers': [(idx, idx + len(a_words) - 1)],
-                        'qlemma': q_tokens.lemmas(),
-                        'lemma': p_tokens.lemmas(),
-                        'pos': p_tokens.pos(),
-                        'ner': p_tokens.entities(),
+                        #'offsets': p_tokens.offsets(),
+                        #'answers': [(idx, idx + len(a_words) - 1)],
+                        #'qlemma': q_tokens.lemmas(),
+                        #'lemma': p_tokens.lemmas(),
+                        #'pos': p_tokens.pos(),
+                        #'ner': p_tokens.entities(),
                     }
     if best_score >= opts['match_threshold']:
-        return best_score, best_ex
+        return True, best_score
+    else:
+        return False, 0    
+
 
 
 def search_docs(inputs, max_ex=5, opts=None):
@@ -163,19 +166,24 @@ def search_docs(inputs, max_ex=5, opts=None):
     if not opts:
         raise RuntimeError('Options dict must be supplied.')
 
-    doc_ids, q_tokens, answer = inputs
+    current_id, doc_ids, q_tokens, answer = inputs
     examples = []
+    negative_examples = []
     for i, doc_id in enumerate(doc_ids):
-        for j, paragraph in enumerate(re.split(r'\n+', fetch_text(doc_id))):
-            found = find_answer(paragraph, q_tokens, answer, opts)
-            if found:
-                # Reverse ranking, giving priority to early docs + paragraphs
-                score = (found[0], -i, -j, random.random())
-                if len(examples) < max_ex:
-                    heapq.heappush(examples, (score, found[1]))
-                else:
-                    heapq.heappushpop(examples, (score, found[1]))
-    return [e[1] for e in examples]
+        #for j, paragraph in enumerate(re.split(r'\n+', fetch_text(doc_id))):
+        paragraph = fetch_text(doc_id)
+        found, score = find_answer(paragraph, q_tokens, answer, opts)
+        if found:
+            # Reverse ranking, giving priority to early docs + paragraphs
+            j = i
+            score = (score, -i, -j, random.random())
+            if len(examples) < max_ex:
+                heapq.heappush(examples, (score, doc_id))
+            else:
+                heapq.heappushpop(examples, (score, doc_id))
+        else:
+            negative_examples.append(doc_id)
+    return current_id, [e[1] for e in examples], negative_examples
 
 
 def process(questions, answers, outfile, opts):
@@ -184,9 +192,10 @@ def process(questions, answers, outfile, opts):
     logger.info('Will save to %s.dstrain and %s.dsdev' % (outfile, outfile))
 
     # Load ranker
-    ranker = opts['ranker_class'](strict=False)
+    ranker = opts['ranker_class'](strict=False, tfidf_path="/home/ericwallace/albertxu/xword/data/processed/wikipedia/tfidf/docs-tfidf-ngram=2-hash=16777216-tokenizer=spacy.npz")
     logger.info('Ranking documents (top %d per question)...' % opts['n_docs'])
     ranked = ranker.batch_closest_docs(questions, k=opts['n_docs'])
+    #print(ranked)
     ranked = [r[0] for r in ranked]
 
     # Start pool of tokenizers with ner enabled
@@ -207,18 +216,21 @@ def process(questions, answers, outfile, opts):
 
     logger.info('Searching documents...')
     cnt = 0
-    inputs = [(ranked[i], q_tokens[i], answers[i]) for i in range(len(ranked))]
+    inputs = [(i, ranked[i], q_tokens[i], answers[i]) for i in range(len(ranked))]
+    #print(inputs)
     search_fn = partial(search_docs, max_ex=opts['max_ex'], opts=opts['search'])
     with open(outfile + '.dstrain', 'w') as f_train, \
          open(outfile + '.dsdev', 'w') as f_dev:
-        for res in workers.imap_unordered(search_fn, inputs):
-            for ex in res:
-                cnt += 1
-                f = f_dev if random.random() < opts['dev_split'] else f_train
-                f.write(json.dumps(ex))
-                f.write('\n')
-                if cnt % 1000 == 0:
-                    logging.info('%d results so far...' % cnt)
+        train_writer = csv.writer(f_train, delimiter="\t")
+        dev_wroter = csv.writer(f_dev, delimiter="\t")
+        for ex in workers.imap_unordered(search_fn, inputs):
+            #print(ex)
+            ex_proc = [ex[0], "" if not ex[1] else ex[1][0], "" if not ex[2] else ex[2][0]]
+            cnt += 1
+            f = dev_writer if random.random() < opts['dev_split'] else train_writer
+            f.writerow(ex_proc)
+            if cnt % 1000 == 0:
+                logging.info('%d results so far...' % cnt)
     workers.close()
     workers.join()
     logging.info('Finished. Total = %d' % cnt)
@@ -252,11 +264,11 @@ if __name__ == "__main__":
                         help='Use context on +/- window_sz for overlap measure')
 
     general = parser.add_argument_group('General')
-    general.add_argument('--max-ex', type=int, default=5,
+    general.add_argument('--max-ex', type=int, default=1,
                          help='Maximum matches generated per question')
-    general.add_argument('--n-docs', type=int, default=5,
+    general.add_argument('--n-docs', type=int, default=100,
                          help='Number of docs retrieved per question')
-    general.add_argument('--tokenizer', type=str, default='corenlp')
+    general.add_argument('--tokenizer', type=str, default='spacy')
     general.add_argument('--ranker', type=str, default='tfidf')
     general.add_argument('--db', type=str, default='sqlite')
     general.add_argument('--workers', type=int, default=cpu_count())
@@ -274,21 +286,23 @@ if __name__ == "__main__":
     dataset = os.path.join(args.data_dir, args.data_name)
     questions = []
     answers = []
-    for line in open(dataset):
-        data = json.loads(line)
-        question = data['question']
-        answer = data['answer']
-
-        # Make sure the regex compiles
-        if args.regex:
-            try:
-                re.compile(answer[0])
-            except BaseException:
-                logger.warning('Regex failed to compile: %s' % answer)
-                continue
-
-        questions.append(question)
-        answers.append(answer)
+    #for line in open(dataset):
+    #    data = json.loads(line)
+    #    question = data['question']
+    #    answer = data['answer']
+    #
+    #    # Make sure the regex compiles
+    #    if args.regex:
+    #        try:
+    #            re.compile(answer[0])
+    #        except BaseException:
+    #            logger.warning('Regex failed to compile: %s' % answer)
+    #            continue
+    with open(dataset) as f:
+        reader = csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
+        for question, answer in reader:
+            questions.append(question)
+            answers.append(answer[2:-2]) # strip off [' and ']
 
     # Get classes
     ranker_class = retriever.get_class(args.ranker)
@@ -298,6 +312,7 @@ if __name__ == "__main__":
     # Form options
     search_keys = ('regex', 'match_threshold', 'char_max',
                    'char_min', 'window_sz')
+    
     opts = {
         'ranker_class': retriever.get_class(args.ranker),
         'tokenizer_class': tokenizers.get_class(args.tokenizer),

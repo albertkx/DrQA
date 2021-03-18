@@ -17,7 +17,7 @@ def set_default(key, value):
     DEFAULTS[key] = value
 
 
-from .corenlp_tokenizer import CoreNLPTokenizer
+#from .corenlp_tokenizer import CoreNLPTokenizer
 from .regexp_tokenizer import RegexpTokenizer
 from .simple_tokenizer import SimpleTokenizer
 

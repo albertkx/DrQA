@@ -80,7 +80,7 @@ class TfidfDocRanker(object):
 
     def parse(self, query):
         """Parse the query into tokens (either ngrams or tokens)."""
-        tokens = self.tokenizer.tokenize(query)
+        tokens = self.tokenizer.tokenize(query, no_space=False)
         return tokens.ngrams(n=self.ngrams, uncased=True,
                              filter_fn=utils.filter_ngram)
 

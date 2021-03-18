@@ -82,8 +82,8 @@ def filter_word(text):
     text = normalize(text)
     if regex.match(r'^\p{P}+$', text):
         return True
-    if text.lower() in STOPWORDS:
-        return True
+    #if text.lower() in STOPWORDS:
+    #    return True
     return False
 
 

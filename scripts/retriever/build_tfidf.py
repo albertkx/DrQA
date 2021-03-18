@@ -40,6 +40,7 @@ PROCESS_DB = None
 
 def init(tokenizer_class, db_class, db_opts):
     global PROCESS_TOK, PROCESS_DB
+    #print(tokenizer_class)
     PROCESS_TOK = tokenizer_class()
     Finalize(PROCESS_TOK, PROCESS_TOK.shutdown, exitpriority=100)
     PROCESS_DB = db_class(**db_opts)
@@ -51,9 +52,9 @@ def fetch_text(doc_id):
     return PROCESS_DB.get_doc_text(doc_id)
 
 
-def tokenize(text):
+def tokenize(text, no_spaces=False):
     global PROCESS_TOK
-    return PROCESS_TOK.tokenize(text)
+    return PROCESS_TOK.tokenize(text, no_spaces)
 
 
 # ------------------------------------------------------------------------------
@@ -61,12 +62,15 @@ def tokenize(text):
 # ------------------------------------------------------------------------------
 
 
-def count(ngram, hash_size, doc_id):
+def count(ngram, hash_size, no_spaces, doc_id):
     """Fetch the text of a document and compute hashed ngrams counts."""
     global DOC2IDX
     row, col, data = [], [], []
     # Tokenize
-    tokens = tokenize(retriever.utils.normalize(fetch_text(doc_id)))
+    if no_spaces:
+        tokens = tokenize(retriever.utils.normalize(fetch_text(doc_id)), no_spaces)
+    else:
+        tokens = tokenize(retriever.utils.normalize(fetch_text(doc_id)))
 
     # Get ngrams from tokens, with stopword/punctuation filtering.
     ngrams = tokens.ngrams(
@@ -108,7 +112,8 @@ def get_count_matrix(args, db, db_opts):
     row, col, data = [], [], []
     step = max(int(len(doc_ids) / 10), 1)
     batches = [doc_ids[i:i + step] for i in range(0, len(doc_ids), step)]
-    _count = partial(count, args.ngram, args.hash_size)
+    _count = partial(count, args.ngram, args.hash_size, args.no_spaces)
+    print(args.no_spaces)
     for i, batch in enumerate(batches):
         logger.info('-' * 25 + 'Batch %d/%d' % (i + 1, len(batches)) + '-' * 25)
         for b_row, b_col, b_data in workers.imap_unordered(_count, batch):
@@ -176,6 +181,8 @@ if __name__ == '__main__':
                               "(e.g. 'corenlp')"))
     parser.add_argument('--num-workers', type=int, default=None,
                         help='Number of CPU processes (for tokenizing, etc)')
+    parser.add_argument('--no_spaces', type=bool, default=False,
+                        help='Remove spaces from file when processing')
     args = parser.parse_args()
 
     logging.info('Counting words...')

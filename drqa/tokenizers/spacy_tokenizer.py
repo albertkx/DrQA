@@ -22,23 +22,31 @@ class SpacyTokenizer(Tokenizer):
             annotators: set that can include pos, lemma, and ner.
             model: spaCy model to use (either path, or keyword like 'en').
         """
-        model = kwargs.get('model', 'en')
+        model = kwargs.get('model', 'en_core_web_sm')
         self.annotators = copy.deepcopy(kwargs.get('annotators', set()))
-        nlp_kwargs = {'parser': False}
-        if not any([p in self.annotators for p in ['lemma', 'pos', 'ner']]):
-            nlp_kwargs['tagger'] = False
-        if 'ner' not in self.annotators:
-            nlp_kwargs['entity'] = False
-        self.nlp = spacy.load(model, **nlp_kwargs)
+        #print(self.annotators)
+        #nlp_kwargs = {'parser': False}
+        nlp_kwargs = {}
+        #if not any([p in self.annotators for p in ['lemma', 'pos', 'ner']]):
+        #    nlp_kwargs['tagger'] = False
+        #if 'ner' not in self.annotators:
+        #    nlp_kwargs['entity'] = False
+        #print(nlp_kwargs)
+        #self.nlp = spacy.load(model, **nlp_kwargs)
+        self.nlp = spacy.load(model)
 
-    def tokenize(self, text):
+    def tokenize(self, text, no_spaces = False):
         # We don't treat new lines as tokens.
-        clean_text = text.replace('\n', ' ')
+        #print("hi")
+        if no_spaces:
+            clean_text = text.replace('\n', ' ')
+        else:
+            clean_text = text
         tokens = self.nlp.tokenizer(clean_text)
-        if any([p in self.annotators for p in ['lemma', 'pos', 'ner']]):
-            self.nlp.tagger(tokens)
-        if 'ner' in self.annotators:
-            self.nlp.entity(tokens)
+        #if any([p in self.annotators for p in ['lemma', 'pos', 'ner']]):
+        #    self.nlp.tagger(tokens)
+        #if 'ner' in self.annotators:
+        #    self.nlp.entity(tokens)
 
         data = []
         for i in range(len(tokens)):

@@ -9,10 +9,11 @@ import os
 from .. import DATA_DIR
 
 DEFAULTS = {
-    'db_path': os.path.join(DATA_DIR, 'wikipedia/docs.db'),
+    'db_path': os.path.join(DATA_DIR, ''),
     'tfidf_path': os.path.join(
         DATA_DIR,
-        'wikipedia/docs-tfidf-ngram=2-hash=16777216-tokenizer=simple.npz'
+        ""
+#        'xwordinfo/tfidf/docs-tfidf-ngram=2-hash=16777216-tokenizer=simple.npz'
     ),
     'elastic_url': 'localhost:9200'
 }
@@ -35,4 +36,3 @@ def get_class(name):
 
 from .doc_db import DocDB
 from .tfidf_doc_ranker import TfidfDocRanker
-from .elastic_doc_ranker import ElasticDocRanker
